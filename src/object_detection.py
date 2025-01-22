@@ -5,73 +5,20 @@ import os
 import shutil
 import yaml
 from tqdm import tqdm
-import random
-import matplotlib.pyplot as plt
+
+from common import (
+    split_data,
+    get_image_paths,
+    data_preview,
+    to_normalized_coordinates,
+)
 
 MODEL_ID = "IDEA-Research/grounding-dino-base"
 IMAGES_DIR = "datasets/stanford-cars-dataset"
 CONF_THRESHOLD = 0.6
-OUTPUT_DIR = "output/stanford-cars-dataset"
+OUTPUT_DIR = "output/stanford-cars-dataset-object-detection"
 SPLIT_SIZE = (0.8, 0.1, 0.1)
 SEED = 42
-
-
-def to_normalized_coordinates(box, image_size):
-    x, y, w, h = box
-    return x / image_size[0], y / image_size[1], w / image_size[0], h / image_size[1]
-
-
-def to_pixel_coordinates(box, image_size):
-    x, y, w, h = box
-    return x * image_size[0], y * image_size[1], w * image_size[0], h * image_size[1]
-
-
-def split_data(data, split_size, seed=42):
-    random.seed(seed)
-    random.shuffle(data)
-    train_data = data[: int(len(data) * split_size[0])]
-    val_data = data[
-        int(len(data) * split_size[0]) : int(len(data) * (split_size[0] + split_size[1]))
-    ]
-    test_data = data[int(len(data) * (split_size[0] + split_size[1])) :]
-    return train_data, val_data, test_data
-
-
-def data_preview(data, label_names):
-    # Get only the first 9 images for a 3x3 grid
-    if len(data) < 9:
-        data = data[:len(data)]
-    else:
-        data = data[:9]
-
-    # Create a 3x3 grid
-    fig, axs = plt.subplots(3, 3, figsize=(15, 15))
-    for i, (image, label) in enumerate(data):
-        ax = axs[i // 3, i % 3]
-        ax.imshow(Image.open(image))
-        ax.axis("off")
-        with open(label, "r") as f:
-            labels = f.readlines()
-
-        for label in labels:
-            obj_class, x, y, w, h = label.split()
-            x, y, w, h = to_pixel_coordinates((float(x), float(y), float(w), float(h)), Image.open(image).size)
-            ax.add_patch(plt.Rectangle((x - w / 2, y - h / 2), w, h, linewidth=2, edgecolor="r", facecolor="none"))
-            ax.text(x - w / 2, y - h / 2, label_names[int(obj_class)], fontsize=12, color="r")
-    
-    plt.savefig(os.path.join(OUTPUT_DIR, "data_preview.jpg"))
-
-def get_image_paths(input_dir):
-    # Get all image paths first in a single list
-    image_paths = []
-    for root, _, files in os.walk(input_dir):
-        for file in files:
-            if file.endswith((".jpg", ".jpeg", ".png")):
-                if len(image_paths) > 100:
-                    break
-                image_paths.append(os.path.join(root, file))
-
-    return image_paths
 
 
 def object_detection_forward(image_path, processor, model, label_names, device):
@@ -113,11 +60,13 @@ def object_detection_forward(image_path, processor, model, label_names, device):
     return image, output_labels
 
 
-def auto_labeler_detection(image_paths, output_path, model, processor, label_names, device):
+def auto_labeler_detection(
+    image_paths, output_path, model, processor, label_names, device, split_size, seed
+):
     # Init output directory
     if os.path.exists(output_path):
-        shutil.rmtree(output_path) # Remove existing output directory
-    
+        shutil.rmtree(output_path)  # Remove existing output directory
+
     os.makedirs(output_path)
     os.makedirs(os.path.join(output_path, "train/images"))
     os.makedirs(os.path.join(output_path, "val/images"))
@@ -139,7 +88,7 @@ def auto_labeler_detection(image_paths, output_path, model, processor, label_nam
         yaml.dump(data_yaml, f)
 
     # Temporary dir
-    temp_dir = os.path.join(OUTPUT_DIR, "data.temp")
+    temp_dir = os.path.join(output_path, "data.temp")
     os.makedirs(temp_dir, exist_ok=True)
 
     image_label_pairs = []
@@ -161,41 +110,39 @@ def auto_labeler_detection(image_paths, output_path, model, processor, label_nam
 
     # Split data
     print("Splitting data")
-    data_preview(image_label_pairs, label_names)
-    train_data, val_data, test_data = split_data(image_label_pairs, SPLIT_SIZE, SEED)
+    data_preview(image_label_pairs, label_names, output_path, "object_detection")
+    train_data, val_data, test_data = split_data(image_label_pairs, split_size, seed)
 
     for image, label in tqdm(
         train_data, desc="Moving train data", total=len(train_data)
     ):
         os.rename(
             image,
-            os.path.join(OUTPUT_DIR, "train/images", os.path.basename(image)),
+            os.path.join(output_path, "train/images", os.path.basename(image)),
         )
         os.rename(
             label,
-            os.path.join(OUTPUT_DIR, "train/labels", os.path.basename(label)),
+            os.path.join(output_path, "train/labels", os.path.basename(label)),
         )
 
     for image, label in tqdm(val_data, desc="Moving val data", total=len(val_data)):
         os.rename(
             image,
-            os.path.join(OUTPUT_DIR, "val/images", os.path.basename(image)),
+            os.path.join(output_path, "val/images", os.path.basename(image)),
         )
         os.rename(
             label,
-            os.path.join(OUTPUT_DIR, "val/labels", os.path.basename(label)),
+            os.path.join(output_path, "val/labels", os.path.basename(label)),
         )
 
-    for image, label in tqdm(
-        test_data, desc="Moving test data", total=len(test_data)
-    ):
+    for image, label in tqdm(test_data, desc="Moving test data", total=len(test_data)):
         os.rename(
             image,
-            os.path.join(OUTPUT_DIR, "test/images", os.path.basename(image)),
+            os.path.join(output_path, "test/images", os.path.basename(image)),
         )
         os.rename(
             label,
-            os.path.join(OUTPUT_DIR, "test/labels", os.path.basename(label)),
+            os.path.join(output_path, "test/labels", os.path.basename(label)),
         )
 
     # Delete temp dir
@@ -218,7 +165,9 @@ def main():
     image_paths = get_image_paths(IMAGES_DIR)
 
     # Run auto-labeler
-    auto_labeler_detection(image_paths, OUTPUT_DIR, model, processor, label_names, device)
+    auto_labeler_detection(
+        image_paths, OUTPUT_DIR, model, processor, label_names, device, SPLIT_SIZE, SEED
+    )
 
 
 if __name__ == "__main__":
