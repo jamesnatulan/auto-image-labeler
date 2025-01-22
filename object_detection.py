@@ -5,10 +5,11 @@ import os
 import yaml
 from tqdm import tqdm
 import random
+import matplotlib.pyplot as plt
 
 MODEL_ID = "IDEA-Research/grounding-dino-base"
 IMAGES_DIR = "datasets/stanford-cars-dataset"
-CONF_THRESHOLD = 0.25
+CONF_THRESHOLD = 0.6
 OUTPUT_DIR = "output/stanford-cars-dataset"
 SPLIT_SIZE = (0.8, 0.1, 0.1)
 SEED = 42
@@ -35,6 +36,31 @@ def split_data(data, split_size, seed=42):
     return train_data, val_data, test_data
 
 
+def data_preview(data, label_names):
+    # Get only the first 9 images for a 3x3 grid
+    if len(data) < 9:
+        data = data[:len(data)]
+    else:
+        data = data[:9]
+
+    # Create a 3x3 grid
+    fig, axs = plt.subplots(3, 3, figsize=(15, 15))
+    for i, (image, label) in enumerate(data):
+        ax = axs[i // 3, i % 3]
+        ax.imshow(Image.open(image))
+        ax.axis("off")
+        with open(label, "r") as f:
+            labels = f.readlines()
+
+        for label in labels:
+            obj_class, x, y, w, h = label.split()
+            x, y, w, h = to_pixel_coordinates((float(x), float(y), float(w), float(h)), Image.open(image).size)
+            ax.add_patch(plt.Rectangle((x - w / 2, y - h / 2), w, h, linewidth=2, edgecolor="r", facecolor="none"))
+            ax.text(x - w / 2, y - h / 2, label_names[int(obj_class)], fontsize=12, color="r")
+    
+    plt.savefig(os.path.join(OUTPUT_DIR, "data_preview.jpg"))
+
+
 def main():
     print("Hello from auto-label!")
 
@@ -45,8 +71,8 @@ def main():
     model = AutoModelForZeroShotObjectDetection.from_pretrained(MODEL_ID).to(device)
 
     # Load labels
-    labels = ["sedan", "van", "motorcycle"]
-    text = ". ".join(labels) + "."
+    label_names = ["sedan", "van", "motorcycle"]
+    text = ". ".join(label_names) + "."
 
     # Init output directory
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -63,8 +89,8 @@ def main():
         "train": "../train/images",
         "val": "../val/images",
         "test": "../test/images",
-        "nc": len(labels),
-        "names": labels,
+        "nc": len(label_names),
+        "names": label_names,
     }
     with open(data_yaml_file, "w") as f:
         yaml.dump(data_yaml, f)
@@ -114,7 +140,7 @@ def main():
                 if len(label.split(" ")) > 1:
                     label = label.split(" ")[0]
 
-                obj_class = labels.index(label)
+                obj_class = label_names.index(label)
 
                 output_labels.append(f"{obj_class} {x} {y} {w} {h}")
 
@@ -126,43 +152,45 @@ def main():
 
     # Split data
     print("Splitting data")
-    images = [file for file in os.listdir(temp_dir) if file.endswith(".jpg")]
-    labels = [file for file in os.listdir(temp_dir) if file.endswith(".txt")]
+    images = [os.path.join(temp_dir, file) for file in os.listdir(temp_dir) if file.endswith(".jpg")]
+    labels = [os.path.join(temp_dir, file) for file in os.listdir(temp_dir) if file.endswith(".txt")]
     data = list(zip(images, labels))
+
+    data_preview(data, label_names)
     train_data, val_data, test_data = split_data(data, SPLIT_SIZE, SEED)
 
     for image, label in tqdm(
         train_data, desc="Moving train data", total=len(train_data)
     ):
         os.rename(
-            os.path.join(temp_dir, image),
-            os.path.join(OUTPUT_DIR, "train/images", image),
+            image,
+            os.path.join(OUTPUT_DIR, "train/images", os.path.basename(image)),
         )
         os.rename(
-            os.path.join(temp_dir, label),
-            os.path.join(OUTPUT_DIR, "train/labels", label),
+            label,
+            os.path.join(OUTPUT_DIR, "train/labels", os.path.basename(label)),
         )
 
     for image, label in tqdm(val_data, desc="Moving val data", total=len(val_data)):
         os.rename(
-            os.path.join(temp_dir, image),
-            os.path.join(OUTPUT_DIR, "val/images", image),
+            image,
+            os.path.join(OUTPUT_DIR, "val/images", os.path.basename(image)),
         )
         os.rename(
-            os.path.join(temp_dir, label),
-            os.path.join(OUTPUT_DIR, "val/labels", label),
+            label,
+            os.path.join(OUTPUT_DIR, "val/labels", os.path.basename(label)),
         )
 
     for image, label in tqdm(
         test_data, desc="Moving test data", total=len(test_data)
     ):
         os.rename(
-            os.path.join(temp_dir, image),
-            os.path.join(OUTPUT_DIR, "test/images", image),
+            image,
+            os.path.join(OUTPUT_DIR, "test/images", os.path.basename(image)),
         )
         os.rename(
-            os.path.join(temp_dir, label),
-            os.path.join(OUTPUT_DIR, "test/labels", label),
+            label,
+            os.path.join(OUTPUT_DIR, "test/labels", os.path.basename(label)),
         )
 
     # Delete temp dir
