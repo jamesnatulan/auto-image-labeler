@@ -1,6 +1,6 @@
 import torch
 from PIL import Image, ImageDraw
-from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
+from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection, AutoModelForImageClassification
 
 def main():
     print("Hello from auto-label!")

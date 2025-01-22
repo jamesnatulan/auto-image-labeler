@@ -11,3 +11,6 @@ wheels/
 
 # Datasets
 datasets/
+
+# Output
+output/
