@@ -5,13 +5,14 @@ import os
 from tqdm import tqdm
 import shutil
 
-from common import get_image_paths, split_data, data_preview
+from src.common import get_image_paths, split_data, data_preview
 
 MODEL_ID = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
 IMAGES_DIR = "datasets/stanford-cars-dataset"
 OUTPUT_DIR = "output/stanford-cars-dataset-image-classification"
 SPLIT_SIZE = (0.8, 0.1, 0.1)
 SEED = 42
+N_PREVIEWS = 5
 
 
 def classification_forward(image_path, processor, model, label_names, device):
@@ -56,8 +57,8 @@ def auto_labeler_classification(
     os.makedirs(temp_dir, exist_ok=True)
 
     image_label_pairs = []
-    for image_path in tqdm(
-        image_paths, desc="Processing images", total=len(image_paths)
+    for i, image_path in enumerate(
+        tqdm(image_paths, desc="Processing images", total=len(image_paths))
     ):
         image, label = classification_forward(
             image_path, processor, model, label_names, device
@@ -67,9 +68,27 @@ def auto_labeler_classification(
         image_label_pairs.append((image_save_path, label))
         image.save(image_save_path)
 
+        if i % 100 == 0:
+            data_preview(
+                image_label_pairs[i - 10 : i],
+                label_names,
+                f"{output_path}/preview_{i}.png",
+                "image_classification",
+            )
+
     # Split data
     train_data, val_data, test_data = split_data(image_label_pairs, split_size, seed)
-    data_preview(train_data, None, output_path, "image_classification")
+
+    # # Generate N previews
+    # for i in tqdm(range(N_PREVIEWS), desc="Generating previews"):
+    #     idx = i * 10
+    #     data_preview(
+    #         image_label_pairs[idx : idx + 10],
+    #         label_names,
+    #         f"{output_path}/preview_{i}.png",
+    #         "image_classification",
+    #     )
+
     for image, label in tqdm(
         train_data, desc="Moving train data", total=len(train_data)
     ):

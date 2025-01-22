@@ -6,7 +6,7 @@ import shutil
 import yaml
 from tqdm import tqdm
 
-from common import (
+from src.common import (
     split_data,
     get_image_paths,
     data_preview,
@@ -19,6 +19,7 @@ CONF_THRESHOLD = 0.6
 OUTPUT_DIR = "output/stanford-cars-dataset-object-detection"
 SPLIT_SIZE = (0.8, 0.1, 0.1)
 SEED = 42
+N_PREVIEWS = 5
 
 
 def object_detection_forward(image_path, processor, model, label_names, device):
@@ -48,10 +49,6 @@ def object_detection_forward(image_path, processor, model, label_names, device):
             x = box[0] + w / 2
             y = box[1] + h / 2
             x, y, w, h = to_normalized_coordinates((x, y, w, h), image.size)
-
-            # Cleanup label
-            if len(label.split(" ")) > 1:
-                label = label.split(" ")[0]
 
             obj_class = label_names.index(label)
 
@@ -92,9 +89,9 @@ def auto_labeler_detection(
     os.makedirs(temp_dir, exist_ok=True)
 
     image_label_pairs = []
-    for image_path in tqdm(
+    for i, image_path in enumerate(tqdm(
         image_paths, desc="Processing images", total=len(image_paths)
-    ):
+    )):
         image, output_labels = object_detection_forward(
             image_path, processor, model, label_names, device
         )
@@ -108,9 +105,25 @@ def auto_labeler_detection(
             f.write("\n".join(output_labels))
         image_label_pairs.append((save_image_path, save_label_path))
 
+        if i % 10 == 0 and i != 0:
+            data_preview(
+                image_label_pairs[i - 10 : i],
+                label_names,
+                f"{output_path}/preview_{i}.png",
+                "object_detection",
+            )
+
+    # # Generate N previews
+    # for i in tqdm(range(N_PREVIEWS), desc="Generating previews"):
+    #     idx = i * 10
+    #     data_preview(
+    #         image_label_pairs[idx : idx + 10],
+    #         label_names,
+    #         f"{output_path}/preview_{i}.png",
+    #         "object_detection",
+    #     )
+
     # Split data
-    print("Splitting data")
-    data_preview(image_label_pairs, label_names, output_path, "object_detection")
     train_data, val_data, test_data = split_data(image_label_pairs, split_size, seed)
 
     for image, label in tqdm(

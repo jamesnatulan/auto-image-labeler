@@ -26,7 +26,7 @@ def split_data(data, split_size, seed=42):
     return train_data, val_data, test_data
 
 
-def data_preview(data, label_names, output_dir, task):
+def data_preview(data, label_names, out, task):
     # Get only the first 9 images for a 3x3 grid
     if len(data) < 9:
         data = data[: len(data)]
@@ -70,7 +70,7 @@ def data_preview(data, label_names, output_dir, task):
         elif task == "image_classification":
             ax.set_title(label, fontsize=12, color="r")
 
-    plt.savefig(os.path.join(output_dir, "data_preview.jpg"))
+    plt.savefig(out)
 
 
 def get_image_paths(input_dir):
