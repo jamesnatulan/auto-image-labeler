@@ -22,144 +22,175 @@ SEED = 42
 N_PREVIEWS = 5
 
 
-def object_detection_forward(image_path, processor, model, label_names, device):
-    text = ". ".join(label_names) + "."
-    image = Image.open(image_path).convert("RGB")
-    inputs = processor(images=image, text=text, return_tensors="pt").to(device)
-    with torch.no_grad():
-        outputs = model(**inputs)
+class AutoLabelerObjectDetection:
+    def __init__(
+        self,
+        input_dir,
+        output_path,
+        model,
+        processor,
+        label_names,
+        device,
+        seed,
+        split_size=None,
+    ):
+        self.image_paths = get_image_paths(input_dir)
+        self.output_path = output_path
+        self.model = model
+        self.processor = processor
+        self.label_names = label_names
+        self.device = device
+        self.seed = seed
+        self.split_size = split_size
+        self.image_label_pairs = []
+        self.idx = 0
 
-    results = processor.post_process_grounded_object_detection(
-        outputs,
-        inputs.input_ids,
-        box_threshold=0.25,
-        text_threshold=0.25,
-        target_sizes=[image.size[::-1]],
-    )
+        # Init output directory
+        if os.path.exists(self.output_path):
+            shutil.rmtree(self.output_path)  # Remove existing output directory
 
-    # Generate labels
-    scores_labels_boxes = zip(
-        results[0]["scores"], results[0]["labels"], results[0]["boxes"]
-    )
-    output_labels = []
-    for score, label, box in scores_labels_boxes:
-        if score > CONF_THRESHOLD:
-            w = box[2] - box[0]
-            h = box[3] - box[1]
-            x = box[0] + w / 2
-            y = box[1] + h / 2
-            x, y, w, h = to_normalized_coordinates((x, y, w, h), image.size)
+        # Monodirectory too hold all images with their label
+        self.data_dir = os.path.join(self.output_path, "data")
+        os.makedirs(self.data_dir, exist_ok=True)
 
-            obj_class = label_names.index(label)
+    def forward(self):
+        """
+        Single pass through the images for progress bar access
+        """
+        text = ". ".join(self.label_names) + "."
+        image_path = self.image_paths[self.idx]
+        image = Image.open(image_path).convert("RGB")
+        inputs = self.processor(images=image, text=text, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
 
-            output_labels.append(f"{obj_class} {x} {y} {w} {h}")
-
-    return image, output_labels
-
-
-def auto_labeler_detection(
-    image_paths, output_path, model, processor, label_names, device, split_size, seed
-):
-    # Init output directory
-    if os.path.exists(output_path):
-        shutil.rmtree(output_path)  # Remove existing output directory
-
-    os.makedirs(output_path)
-    os.makedirs(os.path.join(output_path, "train/images"))
-    os.makedirs(os.path.join(output_path, "val/images"))
-    os.makedirs(os.path.join(output_path, "test/images"))
-    os.makedirs(os.path.join(output_path, "train/labels"))
-    os.makedirs(os.path.join(output_path, "val/labels"))
-    os.makedirs(os.path.join(output_path, "test/labels"))
-
-    # Generate yaml file
-    data_yaml_file = os.path.join(output_path, "classes.yaml")
-    data_yaml = {
-        "train": "../train/images",
-        "val": "../val/images",
-        "test": "../test/images",
-        "nc": len(label_names),
-        "names": label_names,
-    }
-    with open(data_yaml_file, "w") as f:
-        yaml.dump(data_yaml, f)
-
-    # Temporary dir
-    temp_dir = os.path.join(output_path, "data.temp")
-    os.makedirs(temp_dir, exist_ok=True)
-
-    image_label_pairs = []
-    for i, image_path in enumerate(tqdm(
-        image_paths, desc="Processing images", total=len(image_paths)
-    )):
-        image, output_labels = object_detection_forward(
-            image_path, processor, model, label_names, device
+        results = self.processor.post_process_grounded_object_detection(
+            outputs,
+            inputs.input_ids,
+            box_threshold=0.25,
+            text_threshold=0.25,
+            target_sizes=[image.size[::-1]],
         )
 
+        # Generate labels
+        scores_labels_boxes = zip(
+            results[0]["scores"], results[0]["labels"], results[0]["boxes"]
+        )
+        output_labels = []
+        for score, label, box in scores_labels_boxes:
+            if score > CONF_THRESHOLD:
+                w = box[2] - box[0]
+                h = box[3] - box[1]
+                x = box[0] + w / 2
+                y = box[1] + h / 2
+                x, y, w, h = to_normalized_coordinates((x, y, w, h), image.size)
+
+                obj_class = self.label_names.index(label)
+
+                output_labels.append(f"{obj_class} {x} {y} {w} {h}")
+        
         # Save image and label
         file_name = os.path.basename(image_path)
-        save_image_path = os.path.join(temp_dir, file_name)
+        save_image_path = os.path.join(self.data_dir, file_name)
         image.save(save_image_path)
-        save_label_path = os.path.join(temp_dir, file_name.replace(".jpg", ".txt"))
+        save_label_path = os.path.join(self.data_dir, file_name.replace(".jpg", ".txt"))
         with open(save_label_path, "w") as f:
             f.write("\n".join(output_labels))
-        image_label_pairs.append((save_image_path, save_label_path))
+        self.image_label_pairs.append((save_image_path, save_label_path))
+        self.idx += 1
 
-        if i % 10 == 0 and i != 0:
-            data_preview(
-                image_label_pairs[i - 10 : i],
-                label_names,
-                f"{output_path}/preview_{i}.png",
-                "object_detection",
+
+    def autorun(self):
+        """
+        Run the auto-labeler
+        """
+        for i in tqdm(range(len(self.image_paths)), desc="Processing images"):
+            self.forward()
+
+            if i % 100 == 0 and i > 0:
+                data_preview(
+                    self.image_label_pairs[i - 10 : i],
+                    self.label_names,
+                    f"{self.output_path}/preview_{i}.png",
+                    "object_detection",
+                )
+
+        # Save the dataset
+        if self.split_size:
+            self.split()
+            # Generate yaml file
+            data_yaml_file = os.path.join(self.output_path, "classes.yaml")
+            data_yaml = {
+                "train": "../train/images",
+                "val": "../val/images",
+                "test": "../test/images",
+                "nc": len(self.label_names),
+                "names": self.label_names,
+            }
+            with open(data_yaml_file, "w") as f:
+                yaml.dump(data_yaml, f)
+
+        else:
+            # Generate yaml file
+            data_yaml_file = os.path.join(self.output_path, "classes.yaml")
+            data_yaml = {
+                "images": "../data/images",
+                "nc": len(self.label_names),
+                "names": self.label_names,
+            }
+            with open(data_yaml_file, "w") as f:
+                yaml.dump(data_yaml, f)
+            
+
+    def split(self):
+        # Split data
+        train_data, val_data, test_data = split_data(
+            self.image_label_pairs, self.split_size, self.seed
+        )
+
+        # Init splits directory
+        os.makedirs(self.output_path, exist_ok=True)
+        os.makedirs(os.path.join(self.output_path, "train/images"), exist_ok=True)
+        os.makedirs(os.path.join(self.output_path, "val/images"), exist_ok=True)
+        os.makedirs(os.path.join(self.output_path, "test/images"), exist_ok=True)
+        os.makedirs(os.path.join(self.output_path, "train/labels"), exist_ok=True)
+        os.makedirs(os.path.join(self.output_path, "val/labels"), exist_ok=True)
+        os.makedirs(os.path.join(self.output_path, "test/labels"), exist_ok=True)
+
+        for image, label in tqdm(
+            train_data, desc="Moving train data", total=len(train_data)
+        ):
+            os.rename(
+                image,
+                os.path.join(self.output_path, "train/images", os.path.basename(image)),
+            )
+            os.rename(
+                label,
+                os.path.join(self.output_path, "train/labels", os.path.basename(label)),
             )
 
-    # # Generate N previews
-    # for i in tqdm(range(N_PREVIEWS), desc="Generating previews"):
-    #     idx = i * 10
-    #     data_preview(
-    #         image_label_pairs[idx : idx + 10],
-    #         label_names,
-    #         f"{output_path}/preview_{i}.png",
-    #         "object_detection",
-    #     )
+        for image, label in tqdm(val_data, desc="Moving val data", total=len(val_data)):
+            os.rename(
+                image,
+                os.path.join(self.output_path, "val/images", os.path.basename(image)),
+            )
+            os.rename(
+                label,
+                os.path.join(self.output_path, "val/labels", os.path.basename(label)),
+            )
 
-    # Split data
-    train_data, val_data, test_data = split_data(image_label_pairs, split_size, seed)
+        for image, label in tqdm(test_data, desc="Moving test data", total=len(test_data)):
+            os.rename(
+                image,
+                os.path.join(self.output_path, "test/images", os.path.basename(image)),
+            )
+            os.rename(
+                label,
+                os.path.join(self.output_path, "test/labels", os.path.basename(label)),
+            )
 
-    for image, label in tqdm(
-        train_data, desc="Moving train data", total=len(train_data)
-    ):
-        os.rename(
-            image,
-            os.path.join(output_path, "train/images", os.path.basename(image)),
-        )
-        os.rename(
-            label,
-            os.path.join(output_path, "train/labels", os.path.basename(label)),
-        )
-
-    for image, label in tqdm(val_data, desc="Moving val data", total=len(val_data)):
-        os.rename(
-            image,
-            os.path.join(output_path, "val/images", os.path.basename(image)),
-        )
-        os.rename(
-            label,
-            os.path.join(output_path, "val/labels", os.path.basename(label)),
-        )
-
-    for image, label in tqdm(test_data, desc="Moving test data", total=len(test_data)):
-        os.rename(
-            image,
-            os.path.join(output_path, "test/images", os.path.basename(image)),
-        )
-        os.rename(
-            label,
-            os.path.join(output_path, "test/labels", os.path.basename(label)),
-        )
-
-    # Delete temp dir
-    os.rmdir(temp_dir)
+        # Delete mono dir
+        shutil.rmtree(self.data_dir)
 
 
 def main():
@@ -174,13 +205,13 @@ def main():
     # Load labels
     label_names = ["sedan", "van", "motorcycle"]
 
-    # Get image paths
-    image_paths = get_image_paths(IMAGES_DIR)
+    # Init auto-labeler
+    auto_labeler = AutoLabelerObjectDetection(
+        IMAGES_DIR, OUTPUT_DIR, model, processor, label_names, device, SEED, SPLIT_SIZE
+    )
 
     # Run auto-labeler
-    auto_labeler_detection(
-        image_paths, OUTPUT_DIR, model, processor, label_names, device, SPLIT_SIZE, SEED
-    )
+    auto_labeler.autorun()
 
 
 if __name__ == "__main__":
