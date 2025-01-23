@@ -53,7 +53,7 @@ class AutoLabelerClassification:
         image_path = self.image_paths[self.idx]
         image = Image.open(image_path).convert("RGB")
         inputs = self.processor(
-            images=image, text=self.label_names, return_tensors="pt"
+            images=image, text=self.label_names, return_tensors="pt", padding=True
         ).to(self.device)
         with torch.no_grad():
             outputs = self.model(**inputs)
