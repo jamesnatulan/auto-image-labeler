@@ -102,7 +102,9 @@ def main():
         )
 
     device_choice = st.sidebar.radio(
-        "Device", ["auto", "cpu", "cuda", "mps"], help="The device to run the model on"
+        "Device",
+        ["auto", "cpu", "cuda", "mps"],
+        help="The device to run the model on. Auto will select the best device available",
     )
     processor, model, device = load_model(task, model_id, device_choice)
 
@@ -139,7 +141,11 @@ def main():
         st.session_state.labels = []
 
     # Add labels
-    new_label = st.sidebar.text_input("Add label: ", key="label_input")
+    new_label = st.sidebar.text_input(
+        "Add label: ",
+        key="label_input",
+        help="Add a new label. Separate multiple labels with a comma",
+    )
     if len(new_label.split(",")) > 0:
         new_labels = new_label.split(",")
         new_labels = [label.strip() for label in new_labels]
