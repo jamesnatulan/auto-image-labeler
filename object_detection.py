@@ -67,11 +67,10 @@ class AutoLabelerObjectDetection:
         results = self.processor.post_process_grounded_object_detection(
             outputs,
             inputs.input_ids,
-            box_threshold=0.25,
+            box_threshold=0.35,
             text_threshold=0.25,
             target_sizes=[image.size[::-1]],
         )
-
         # Generate labels
         scores_labels_boxes = zip(
             results[0]["scores"], results[0]["labels"], results[0]["boxes"]
@@ -84,8 +83,11 @@ class AutoLabelerObjectDetection:
                 x = box[0] + w / 2
                 y = box[1] + h / 2
                 x, y, w, h = to_normalized_coordinates((x, y, w, h), image.size)
-
-                obj_class = self.label_names.index(label)
+                
+                if label not in self.label_names:
+                    continue # Skip if label not in label_names
+                else:
+                    obj_class = self.label_names.index(label)
 
                 output_labels.append(f"{obj_class} {x} {y} {w} {h}")
         

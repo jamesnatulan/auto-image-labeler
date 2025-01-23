@@ -12,18 +12,31 @@ from image_classification import AutoLabelerClassification
 from object_detection import AutoLabelerObjectDetection
 from common import data_preview
 
+
+def start_labeling():
+    st.session_state.start_labeling = True
+    st.session_state.cancel_labeling = False
+
+
+def cancel_labeling():
+    st.session_state.start_labeling = False
+    st.session_state.cancel_labeling = True
+
+
 def empty_label_input():
     st.session_state.label_input = ""
     st.session_state.labels = []
 
+
 def data_selector(folder_path="datasets"):
     folders = os.listdir(folder_path)
-    selected_filename = st.selectbox(
+    selected_filename = st.sidebar.selectbox(
         "Select a folder",
         folders,
         help="Looks into your 'datasets' directory for image folders to use for labeling",
     )
     return os.path.join(folder_path, selected_filename)
+
 
 @st.cache_resource
 def load_model(task, model_id, device):
@@ -51,16 +64,28 @@ def load_model(task, model_id, device):
 def main():
     # Start streamlit app
     st.title("Image Auto-Labeling")
-    
-    # Sidebar
-    st.sidebar.title("Settings")
-    seed = st.sidebar.number_input("Seed", value=42, help="Random seed for reproducibility")
+    st.markdown(
+        """Automatically label images for Image Classification or Object Detection tasks using zero-shot models.
+        The app will automatically split the data into **train**, **validation**, and **test** sets based on the provided splits.
+        Object Detection outputs the data in **YOLOv8 format**, while Image Classification follows the format that 
+        **CIFAR-10** dataset uses(a directory for each label).
+        """
+    )
 
+    st.divider()
+
+    # Initialize session state vars
+    if "start_labeling" not in st.session_state:
+        st.session_state.start_labeling = False
+    if "cancel_labeling" not in st.session_state:
+        st.session_state.cancel_labeling = True
+
+    # Sidebar
     # Initialize models
+    st.sidebar.header("Model Configuration")
     task = st.sidebar.selectbox(
         "Task",
-        ["object_detection", "image_classification"],
-        index=1,
+        ["image_classification", "object_detection"],
         help="Select the task to perform",
     )
     if task == "object_detection":
@@ -82,18 +107,21 @@ def main():
     processor, model, device = load_model(task, model_id, device_choice)
 
     # Select dataset
-    st.header("Images")
+    st.sidebar.header("Data Settings")
     dataset_dir = data_selector()
 
     # Output path
-    output_dir = st.text_input(
+    output_dir = st.sidebar.text_input(
         "Output directory",
         value=f"{os.path.basename(dataset_dir)}-{task}",
         help="The directory where the labeled data will be saved",
     )
 
     # Splits
-    splits = st.slider(
+    seed = st.sidebar.number_input(
+        "Seed", value=42, help="Random seed for reproducibility"
+    )
+    splits = st.sidebar.slider(
         "Splits",
         min_value=0.0,
         max_value=1.0,
@@ -103,41 +131,57 @@ def main():
     train_split = round(splits[0], 2)
     val_split = round(splits[1] - splits[0], 2)
     test_split = round(1.0 - splits[1], 2)
+    st.sidebar.text(f"Train: {train_split} | Val: {val_split} | Test: {test_split}")
 
-    st.text(
-        f"Train: {train_split} | Val: {val_split} | Test: {test_split}"
-    )
-
-    
     # Initialize labels
-    st.header("Labels")
+    st.sidebar.header("Labels")
     if "labels" not in st.session_state:
         st.session_state.labels = []
-    
+
     # Add labels
-    new_label = st.text_input("Add label: ", key="label_input")
+    new_label = st.sidebar.text_input("Add label: ", key="label_input")
     if len(new_label.split(",")) > 0:
         new_labels = new_label.split(",")
         new_labels = [label.strip() for label in new_labels]
-    
+
     else:
         new_labels = [new_label.strip()]
-    
+
     for label in new_labels:
         if label not in st.session_state.labels and label != "":
             st.session_state.labels.append(label)
 
     # Display labels
-    with st.container():
-        st.write(" | ".join(st.session_state.labels))
+    st.sidebar.markdown(" | ".join(st.session_state.labels))
 
     # Clear labels
-    st.button("Clear labels", on_click=empty_label_input)
+    st.sidebar.button("Clear labels", on_click=empty_label_input)
 
     # Start labeling
-    if st.button("Start labeling"):
+    st.sidebar.divider()
+    left, right = st.sidebar.columns(2)
+    left.button(
+        "Start labeling!",
+        disabled=not st.session_state.cancel_labeling,
+        on_click=start_labeling,
+        use_container_width=True,
+    )
+    right.button(
+        "Cancel",
+        disabled=not st.session_state.start_labeling,
+        on_click=cancel_labeling,
+        use_container_width=True,
+    )
+
+    if st.session_state.start_labeling:
+        # Prepare previews
+        st.header("Data Previews")
+        st.text("The tabs will fill up with preview images as the labeling progresses")
+        tabs = st.tabs([str(i) for i in range(1, 11, 1)])
+        tab_idx = 0
+
         output_path = os.path.join("output", output_dir)
-        if task=="object_detection":
+        if task == "object_detection":
             # Init auto-labeler
             auto_labeler_detect = AutoLabelerObjectDetection(
                 dataset_dir,
@@ -149,10 +193,6 @@ def main():
                 (train_split, val_split, test_split),
                 seed,
             )
-
-            # Prepare previews
-            tabs = st.tabs([str(i) for i in range(1, 11, 1)])
-            tab_idx = 0
 
             # Run auto-labeler
             progress_bar = st.progress(0.0, text="Processing images")
@@ -167,12 +207,20 @@ def main():
                         "object_detection",
                     )
                     if tab_idx < 10:
-                        tabs[tab_idx].image(f"{auto_labeler_detect.output_path}/preview_{i}.png")
+                        tabs[tab_idx].image(
+                            f"{auto_labeler_detect.output_path}/preview_{i}.png"
+                        )
                         tab_idx += 1
 
+                if st.session_state.cancel_labeling:
+                    break
+
+                progress_bar.progress(
+                    i / len(auto_labeler_detect.image_paths), text="Processing images"
+                )
             st.success("Labeling complete")
 
-        elif task=="image_classification":
+        elif task == "image_classification":
             # Init auto-labeler
             auto_labeler_classify = AutoLabelerClassification(
                 dataset_dir,
@@ -184,10 +232,6 @@ def main():
                 (train_split, val_split, test_split),
                 seed,
             )
-
-            # Prepare previews
-            tabs = st.tabs([str(i) for i in range(1, 11, 1)])
-            tab_idx = 0
 
             # Run auto-labeler
             progress_bar = st.progress(0.0, text="Processing images")
@@ -202,12 +246,18 @@ def main():
                         "image_classification",
                     )
                     if tab_idx < 10:
-                        tabs[tab_idx].image(f"{auto_labeler_classify.output_path}/preview_{i}.png")
+                        tabs[tab_idx].image(
+                            f"{auto_labeler_classify.output_path}/preview_{i}.png"
+                        )
                         tab_idx += 1
-                
-                progress_bar.progress(i / len(auto_labeler_classify.image_paths), text="Processing images")
-            st.success("Labeling complete")
 
+                if st.session_state.cancel_labeling:
+                    break
+
+                progress_bar.progress(
+                    i / len(auto_labeler_classify.image_paths), text="Processing images"
+                )
+            st.success("Labeling complete")
 
 
 if __name__ == "__main__":
