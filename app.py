@@ -5,12 +5,12 @@ import torch
 from transformers import (
     AutoProcessor,
     AutoModelForZeroShotObjectDetection,
-    AutoModelForImageClassification,
+    AutoModelForZeroShotImageClassification,
 )
 
-from src.image_classification import auto_labeler_classification
-from src.object_detection import auto_labeler_detection
-from src.common import get_image_paths
+from image_classification import AutoLabelerClassification
+from object_detection import AutoLabelerObjectDetection
+from common import data_preview
 
 def empty_label_input():
     st.session_state.label_input = ""
@@ -25,14 +25,14 @@ def data_selector(folder_path="datasets"):
     )
     return os.path.join(folder_path, selected_filename)
 
-
 @st.cache_resource
 def load_model(task, model_id, device):
-    processor = AutoProcessor.from_pretrained(model_id)
     if task == "object_detection":
         model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id)
+        processor = AutoProcessor.from_pretrained(model_id)
     elif task == "image_classification":
-        model = AutoModelForImageClassification.from_pretrained(model_id)
+        model = AutoModelForZeroShotImageClassification.from_pretrained(model_id)
+        processor = AutoProcessor.from_pretrained(model_id)
     else:
         raise ValueError(f"Task {task} not supported")
 
@@ -60,6 +60,7 @@ def main():
     task = st.sidebar.selectbox(
         "Task",
         ["object_detection", "image_classification"],
+        index=1,
         help="Select the task to perform",
     )
     if task == "object_detection":
@@ -135,11 +136,11 @@ def main():
 
     # Start labeling
     if st.button("Start labeling"):
-        image_paths = get_image_paths(dataset_dir)
         output_path = os.path.join("output", output_dir)
         if task=="object_detection":
-            auto_labeler_detection(
-                image_paths,
+            # Init auto-labeler
+            auto_labeler_detect = AutoLabelerObjectDetection(
+                dataset_dir,
                 output_path,
                 model,
                 processor,
@@ -148,9 +149,33 @@ def main():
                 (train_split, val_split, test_split),
                 seed,
             )
+
+            # Prepare previews
+            tabs = st.tabs([str(i) for i in range(1, 11, 1)])
+            tab_idx = 0
+
+            # Run auto-labeler
+            progress_bar = st.progress(0.0, text="Processing images")
+            for i in range(len(auto_labeler_detect.image_paths)):
+                auto_labeler_detect.forward()
+
+                if i % 100 == 0 and i > 0:
+                    data_preview(
+                        auto_labeler_detect.image_label_pairs[i - 10 : i],
+                        auto_labeler_detect.label_names,
+                        f"{auto_labeler_detect.output_path}/preview_{i}.png",
+                        "object_detection",
+                    )
+                    if tab_idx < 10:
+                        tabs[tab_idx].image(f"{auto_labeler_detect.output_path}/preview_{i}.png")
+                        tab_idx += 1
+
+            st.success("Labeling complete")
+
         elif task=="image_classification":
-            auto_labeler_classification(
-                image_paths,
+            # Init auto-labeler
+            auto_labeler_classify = AutoLabelerClassification(
+                dataset_dir,
                 output_path,
                 model,
                 processor,
@@ -159,6 +184,30 @@ def main():
                 (train_split, val_split, test_split),
                 seed,
             )
+
+            # Prepare previews
+            tabs = st.tabs([str(i) for i in range(1, 11, 1)])
+            tab_idx = 0
+
+            # Run auto-labeler
+            progress_bar = st.progress(0.0, text="Processing images")
+            for i in range(len(auto_labeler_classify.image_paths)):
+                auto_labeler_classify.forward()
+
+                if i % 100 == 0 and i > 0:
+                    data_preview(
+                        auto_labeler_classify.image_label_pairs[i - 10 : i],
+                        auto_labeler_classify.label_names,
+                        f"{auto_labeler_classify.output_path}/preview_{i}.png",
+                        "image_classification",
+                    )
+                    if tab_idx < 10:
+                        tabs[tab_idx].image(f"{auto_labeler_classify.output_path}/preview_{i}.png")
+                        tab_idx += 1
+                
+                progress_bar.progress(i / len(auto_labeler_classify.image_paths), text="Processing images")
+            st.success("Labeling complete")
+
 
 
 if __name__ == "__main__":

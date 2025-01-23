@@ -79,8 +79,6 @@ def get_image_paths(input_dir):
     for root, _, files in os.walk(input_dir):
         for file in files:
             if file.endswith((".jpg", ".jpeg", ".png")):
-                if len(image_paths) > 100:
-                    break
                 image_paths.append(os.path.join(root, file))
 
     return image_paths
