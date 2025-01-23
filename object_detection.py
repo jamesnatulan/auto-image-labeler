@@ -6,7 +6,7 @@ import shutil
 import yaml
 from tqdm import tqdm
 
-from src.common import (
+from common import (
     split_data,
     get_image_paths,
     data_preview,
